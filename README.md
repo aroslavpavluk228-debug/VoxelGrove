@@ -1,3 +1,11 @@
 # Voxel Grove 0.2
 
-Android voxel sandbox game. Source files and Android build workflow are in this repository.
+Оригінальна кубічна 3D-пісочниця для Android. Містить генерацію місцевості, печери, руди, мобів, крафт, два режими гри, збереження світу й сенсорне керування.
+
+**Інструкція українською:** [README_UK.md](README_UK.md)
+
+## Як отримати APK
+
+Відкрийте вкладку **Actions → Build Android → Run workflow**, дочекайтеся успішного запуску, відкрийте **Artifacts → VoxelGrove-Android** і завантажте `app-debug.apk` з архіву.
+
+Це тестова збірка debug, не готовий реліз Google Play. Результат збірки залежить від проходження GitHub Actions.

@@ -1,0 +1,31 @@
+name: Build Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Test voxel engine
+        run: |
+          mkdir -p test-out
+          javac -d test-out app/src/main/java/ua/waserko/voxelgrove/World.java tests/WorldTest.java
+          java -cp test-out ua.waserko.voxelgrove.WorldTest
+      - name: Build Android 0.2
+        run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug bundleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoxelGrove-Android
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/bundle/release/*.aab
