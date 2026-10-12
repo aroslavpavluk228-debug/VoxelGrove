@@ -40,6 +40,16 @@ public class WorldTest {
   File old=File.createTempFile("grove-v1",".vg");
   try(DataOutputStream d=new DataOutputStream(new FileOutputStream(old))){d.writeInt(0x56475231);d.writeInt(17);d.writeFloat(12.5f);d.writeFloat(5);d.writeFloat(12.5f);d.writeFloat(0);d.writeFloat(0);d.writeInt(7);d.write(new byte[World.N*World.H*World.N]);}
   check(v.load(old)&&v.selected==7&&v.hotbar[0]==7&&v.creative,"old V1 saves migrate");
+  World motion=new World();motion.blocks=new byte[World.N*World.H*World.N];
+  motion.x=20.5f;motion.y=3;motion.z=20.5f;motion.yaw=0;motion.hunger=20;
+  motion.step(.05f,0,1,false,false,false);float walking=20.5f-motion.z;
+  motion.z=20.5f;motion.step(.05f,0,1,false,true,false);float running=20.5f-motion.z;
+  check(running>walking*1.4f,"sprint is faster than walking");
+  motion.z=20.5f;motion.step(.05f,0,1,false,false,true);float sneaking=20.5f-motion.z;
+  check(sneaking<walking*.55f,"sneak is slower than walking");
+  check(motion.crouching&&Math.abs(motion.cameraHeight()-1.12f)<.01f,"sneak lowers viewpoint");
+  motion.step(.05f,0,0,false,false,false);
+  check(Math.abs(motion.cameraHeight()-1.55f)<.01f,"standing restores viewpoint");
   f.delete();old.delete();System.out.println(count+" checks passed");
  }
 }

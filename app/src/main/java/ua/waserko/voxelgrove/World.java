@@ -18,12 +18,13 @@ public final class World {
     };
     public byte[] blocks=new byte[N*H*N];
     public float x=24.5f,y=14,z=24.5f,yaw=0,pitch=-12,vy,health=20,hunger=20,dayTime=.25f;
-    public boolean grounded,creative=true;
+    public boolean grounded,creative=true, crouching=false, sprinting=false;
     public int selected=1,seed=2026,hotbarIndex=0;
     public final int[] bag=new int[MAX_ITEM+1];
     public final int[] hotbar={1,2,3,4,6,16,17,21};
     public final ArrayList<Mob> mobs=new ArrayList<>();
     public int lastX=-1,lastZ=-1;
+    public float cameraHeight(){return crouching?1.12f:1.55f;}
     private float lifeClock=0,mobClock=0;
     private final Random gameRandom=new Random(2026);
     public static final class Mob {
@@ -76,7 +77,7 @@ public final class World {
             int b=groundTop(a,c);if(get(a,b-1,c)==9||Math.abs(a-24)+Math.abs(c-24)<8)continue;
             mobs.add(new Mob(i%5==0?2:i%2, a+.5f,b,c+.5f,r.nextFloat()*6.28f));
         }
-        lastX=-1;lastZ=-1;
+        lastX=-1;lastZ=-1;crouching=false;sprinting=false;
     }
     private int groundTop(int a,int c){for(int b=H-2;b>=0;b--){int t=get(a,b,c);if(t!=0&&t!=9&&t!=4&&t!=5&&t!=20)return b+1;}return 2;}
     int top(int a,int c){return groundTop(a,c);}
@@ -103,12 +104,15 @@ public final class World {
         for(int c=(int)Math.floor(pz-.28f);c<=(int)Math.floor(pz+.28f);c++)if(!passable(get(a,b,c)))return true;
         return false;
     }
-    public void step(float dt,float side,float forward,boolean jump){
+    public void step(float dt,float side,float forward,boolean jump){step(dt,side,forward,jump,false,false);}
+    public void step(float dt,float side,float forward,boolean jump,boolean sprint,boolean crouch){
+        crouching=crouch;sprinting=sprint&&!crouch&&forward>.15f&&hunger>1;
         float n=(float)Math.sqrt(side*side+forward*forward);if(n>1){side/=n;forward/=n;}
-        float rad=(float)Math.toRadians(yaw),v=4.3f*dt;
+        float rad=(float)Math.toRadians(yaw),v=(crouch?1.65f:sprinting?6.4f:4.3f)*dt;
         float dx=((float)Math.cos(rad)*side+(float)Math.sin(rad)*forward)*v;
         float dz=((float)Math.sin(rad)*side-(float)Math.cos(rad)*forward)*v;
-        if(!collides(x+dx,y,z))x+=dx;if(!collides(x,y,z+dz))z+=dz;
+        if(!collides(x+dx,y,z) && (!crouch || !grounded || hasSupport(x+dx,z)))x+=dx;
+        if(!collides(x,y,z+dz) && (!crouch || !grounded || hasSupport(x,z+dz)))z+=dz;
         if(jump&&grounded){vy=7;grounded=false;}vy-=18*dt;
         float dy=vy*dt;int steps=Math.max(1,(int)(Math.abs(dy)/.08f)+1);grounded=false;
         for(int i=0;i<steps;i++){if(!collides(x,y+dy/steps,z))y+=dy/steps;else{if(vy<0)grounded=true;vy=0;break;}}
@@ -127,11 +131,15 @@ public final class World {
         }
         if(mobClock>1.5f)mobClock=0;
     }
+    private boolean hasSupport(float px,float pz){
+        // Sneaking keeps feet supported near cliff edges.
+        return !passable(get((int)Math.floor(px),(int)Math.floor(y-.12f),(int)Math.floor(pz)));
+    }
     public int[] ray(){
         double ya=Math.toRadians(yaw),pi=Math.toRadians(pitch);
         float dx=(float)(Math.sin(ya)*Math.cos(pi)),dy=(float)Math.sin(pi),dz=(float)(-Math.cos(ya)*Math.cos(pi));
-        int ax=(int)Math.floor(x),ay=(int)Math.floor(y+1.55f),az=(int)Math.floor(z);
-        for(float t=0;t<6;t+=.035f){int bx=(int)Math.floor(x+dx*t),by=(int)Math.floor(y+1.55f+dy*t),bz=(int)Math.floor(z+dz*t);
+        int ax=(int)Math.floor(x),ay=(int)Math.floor(y+cameraHeight()),az=(int)Math.floor(z);
+        for(float t=0;t<6;t+=.035f){int bx=(int)Math.floor(x+dx*t),by=(int)Math.floor(y+cameraHeight()+dy*t),bz=(int)Math.floor(z+dz*t);
             if(get(bx,by,bz)!=0&&get(bx,by,bz)!=9)return new int[]{bx,by,bz,ax,ay,az};ax=bx;ay=by;az=bz;
         }return null;
     }

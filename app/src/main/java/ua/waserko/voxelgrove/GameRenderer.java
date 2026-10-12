@@ -14,7 +14,7 @@ import javax.microedition.khronos.opengles.GL10;
 /** Fixed-pipeline ES 1.0: 3x3 updateable meshes, 16px procedural atlas, animated creatures. */
 public final class GameRenderer implements GLSurfaceView.Renderer {
     final World world;final MainActivity owner;
-    volatile float side,forward;volatile boolean jump,paused=true;
+    volatile float side,forward;volatile boolean jump,sprint,crouch,paused=true;
     static final int CH=16,COLS=World.N/CH;
     private static final class Mesh {FloatBuffer pos,shade,uv;int count;}
     private final Mesh[] chunks=new Mesh[COLS*COLS];
@@ -52,14 +52,14 @@ public final class GameRenderer implements GLSurfaceView.Renderer {
         GLU.gluPerspective(g,72,(float)w/Math.max(1,h),.08f,72);g.glMatrixMode(GL10.GL_MODELVIEW);
     }
     public void onDrawFrame(GL10 g){long now=System.nanoTime();float dt=Math.min(.035f,(now-last)/1e9f);last=now;
-        if(!paused){world.step(dt,side,forward,jump);jump=false;if(now-lastSave>15_000_000_000L){owner.saveWorld();lastSave=now;}}
+        if(!paused){world.step(dt,side,forward,jump,sprint,crouch);if(now-lastSave>15_000_000_000L){owner.saveWorld();lastSave=now;}}
         float sun=(float)Math.max(.20,.5+.5*Math.sin(2*Math.PI*world.dayTime));
         float skyR=.035f+sun*.54f,skyG=.065f+sun*.72f,skyB=.13f+sun*.79f;
         g.glClearColor(skyR,skyG,skyB,1);g.glFogfv(GL10.GL_FOG_COLOR,new float[]{skyR,skyG,skyB,1},0);
         g.glClear(GL10.GL_COLOR_BUFFER_BIT|GL10.GL_DEPTH_BUFFER_BIT);g.glLoadIdentity();
         double ya=Math.toRadians(world.yaw),pi=Math.toRadians(world.pitch);
-        GLU.gluLookAt(g,world.x,world.y+1.55f,world.z,world.x+(float)(Math.sin(ya)*Math.cos(pi)),
-            world.y+1.55f+(float)Math.sin(pi),world.z-(float)(Math.cos(ya)*Math.cos(pi)),0,1,0);
+        GLU.gluLookAt(g,world.x,world.y+world.cameraHeight(),world.z,world.x+(float)(Math.sin(ya)*Math.cos(pi)),
+            world.y+world.cameraHeight()+(float)Math.sin(pi),world.z-(float)(Math.cos(ya)*Math.cos(pi)),0,1,0);
         for(int a=0;a<chunks.length;a++)if(dirty[a]){buildChunk(a/COLS,a%COLS);dirty[a]=false;}
         g.glEnable(GL10.GL_TEXTURE_2D);g.glBindTexture(GL10.GL_TEXTURE_2D,texId);g.glEnableClientState(GL10.GL_TEXTURE_COORD_ARRAY);
         for(Mesh m:chunks)if(m!=null&&m.count>0){g.glVertexPointer(3,GL10.GL_FLOAT,0,m.pos);g.glColorPointer(4,GL10.GL_FLOAT,0,m.shade);
@@ -80,7 +80,7 @@ public final class GameRenderer implements GLSurfaceView.Renderer {
             for(int face=0;face<6;face++){
                 int[] d=D[face];int other=world.get(x+d[0],y+d[1],z+d[2]);if(other!=0&&!(t!=9&&other==9))continue;
                 float sh=shades[face]*(.95f+((x*71+y*37+z*13)&7)*.008f);
-                int tile=t==1&&face!=2?28:t==4&&(face==2||face==3)?29:t==19&&face!=2?30:t;
+                int tile=t==1?(face==2?1:face==3?2:28):t==4?(face==2||face==3?29:4):t==19&&face!=2?30:t;
                 float u0=(tile%8)/8f+.0005f,u1=(tile%8+1)/8f-.0005f;
                 float v0=(tile/8)/4f+.001f,v1=(tile/8+1)/4f-.001f;
                 float[] quadUV={u1,v1,u1,v0,u0,v0,u0,v1};
@@ -92,14 +92,50 @@ public final class GameRenderer implements GLSurfaceView.Renderer {
         Mesh m=new Mesh();m.pos=buffer(vv,vi);m.shade=buffer(cc,ci);m.uv=buffer(uv,ti);m.count=vi/3;chunks[cx*COLS+cz]=m;
     }
     private FloatBuffer makeCube(){float[] a=new float[108];int n=0;for(int f=0;f<6;f++)for(int k:TRI){a[n++]=F[f][k*3]-.5f;a[n++]=F[f][k*3+1];a[n++]=F[f][k*3+2]-.5f;}return buffer(a,a.length);}
-    private void drawMobs(GL10 g){g.glDisableClientState(GL10.GL_COLOR_ARRAY);g.glVertexPointer(3,GL10.GL_FLOAT,0,cube);
-        for(World.Mob m:world.mobs){float[] rgb=m.type==0?new float[]{.94f,.91f,.80f}:m.type==1?new float[]{.72f,.47f,.36f}:new float[]{.36f,.27f,.52f};
-            g.glColor4f(rgb[0],rgb[1],rgb[2],1);box(g,m.x,m.y+.28f,m.z,.8f,.65f,.55f);
-            g.glColor4f(rgb[0]*.9f,rgb[1]*.9f,rgb[2]*.9f,1);box(g,m.x,m.y+.64f,m.z-.42f,.50f,.55f,.48f);
-            for(int dx=-1;dx<=1;dx+=2)for(int dz=-1;dz<=1;dz+=2)box(g,m.x+dx*.22f,m.y,m.z+dz*.17f,.18f,.32f,.18f);
+    /** Articulated block-animal models with faces, legs and distinct silhouettes. */
+    private void drawMobs(GL10 g){
+        g.glDisableClientState(GL10.GL_COLOR_ARRAY);
+        g.glVertexPointer(3,GL10.GL_FLOAT,0,cube);
+        for(World.Mob m:world.mobs){
+            // Distinct quadrupeds and humanoid; walk cycle is driven by simulated phase.
+            g.glPushMatrix();g.glTranslatef(m.x,m.y,m.z);
+            g.glRotatef((float)(m.phase*35.0),0,1,0);
+            float walk=(float)Math.sin(m.phase*5.0)*.14f;
+            if(m.type==0){ // fluffy sheep
+                color(g,.88f,.88f,.80f);box(g,0,.42f,0,.92f,.71f,.62f);
+                color(g,.98f,.97f,.90f);box(g,0,.70f,-.48f,.52f,.56f,.45f);
+                color(g,.68f,.68f,.66f);box(g,0,.49f,-.75f,.34f,.24f,.13f);
+                for(int k=-1;k<=1;k+=2){color(g,.98f,.98f,.92f);box(g,k*.27f,.76f,-.43f,.19f,.2f,.22f);
+                    color(g,.12f,.16f,.14f);box(g,k*.14f,.79f,-.715f,.064f,.085f,.04f);}
+                for(int dx=-1;dx<=1;dx+=2)for(int dz=-1;dz<=1;dz+=2){
+                    color(g,.62f,.62f,.57f);box(g,dx*.31f,.02f+walk*dx*dz,dz*.20f,.18f,.49f,.17f);}
+                color(g,.96f,.94f,.86f);box(g,0,.81f,.02f,.87f,.24f,.55f);
+            }else if(m.type==1){ // pig with ears and a protruding snout
+                color(g,.90f,.54f,.57f);box(g,0,.39f,0,.94f,.67f,.62f);
+                color(g,.95f,.63f,.64f);box(g,0,.64f,-.46f,.60f,.58f,.53f);
+                for(int k=-1;k<=1;k+=2){color(g,.98f,.67f,.69f);box(g,k*.22f,1.00f,-.46f,.16f,.24f,.12f);
+                    color(g,.15f,.12f,.15f);box(g,k*.15f,.78f,-.743f,.075f,.09f,.045f);}
+                color(g,.98f,.70f,.72f);box(g,0,.48f,-.78f,.37f,.26f,.17f);
+                for(int k=-1;k<=1;k+=2){color(g,.59f,.31f,.38f);box(g,k*.105f,.5f,-.876f,.05f,.073f,.025f);}
+                for(int dx=-1;dx<=1;dx+=2)for(int dz=-1;dz<=1;dz+=2){
+                    color(g,.82f,.42f,.47f);box(g,dx*.31f,.02f+walk*dx*dz,dz*.21f,.20f,.42f,.20f);}
+                color(g,.98f,.68f,.70f);box(g,.26f,.54f,.45f,.09f,.12f,.21f);
+            }else{ // wandering hostile zombie, animated swinging arms
+                color(g,.32f,.49f,.41f);box(g,0,1.34f,0,.54f,.60f,.50f);
+                color(g,.19f,.32f,.29f);box(g,0,.83f,0,.59f,.58f,.40f);
+                color(g,.19f,.19f,.40f);box(g,-.155f,.20f+walk,0,.23f,.65f,.28f);
+                color(g,.19f,.19f,.40f);box(g,.155f,.20f-walk,0,.23f,.65f,.28f);
+                color(g,.37f,.53f,.44f);box(g,-.42f,.82f+walk,-.13f,.24f,.65f,.26f);
+                color(g,.37f,.53f,.44f);box(g,.42f,.82f-walk,-.13f,.24f,.65f,.26f);
+                color(g,.11f,.21f,.16f);box(g,0,1.82f,0,.57f,.15f,.55f);
+                for(int k=-1;k<=1;k+=2){color(g,.82f,.19f,.13f);box(g,k*.14f,1.47f,-.267f,.11f,.10f,.03f);}
+                color(g,.22f,.32f,.28f);box(g,0,1.23f,-.275f,.19f,.065f,.025f);
+            }
+            g.glPopMatrix();
         }
         g.glEnableClientState(GL10.GL_COLOR_ARRAY);
     }
+    private void color(GL10 g,float r,float gr,float b){g.glColor4f(r,gr,b,1);}
     private void box(GL10 g,float x,float y,float z,float w,float h,float d){g.glPushMatrix();g.glTranslatef(x,y,z);g.glScalef(w,h,d);g.glDrawArrays(GL10.GL_TRIANGLES,0,36);g.glPopMatrix();}
     void outline(GL10 g,int[] h){float[] p={0,0,0,1,0,0,1,1,0,0,1,0,0,0,1,1,0,1,1,1,1,0,1,1};int[] lines={0,1,1,2,2,3,3,0,4,5,5,6,6,7,7,4,0,4,1,5,2,6,3,7};float[] v=new float[72];int j=0;
         for(int i:lines)for(int a=0;a<3;a++)v[j++]=h[a]+(p[i*3+a]-.5f)*1.006f+.5f;
